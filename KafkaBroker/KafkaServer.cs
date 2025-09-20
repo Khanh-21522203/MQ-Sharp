@@ -23,7 +23,7 @@ public class KafkaServer
 
         var handlers = new Dictionary<short, IRequestHandler>
         {
-            [(short)ApiKeys.Produce] = new ProduceHandler(broker, logManager, logger),
+            [(short)ApiKeys.Produce] = new ProduceHandler(logManager, logger),
             [(short)ApiKeys.Fetch] = new FetchHandler(broker, logger),
             [(short)ApiKeys.ListOffsets] = new ListOffsetsHandler(broker, logger),
             [(short)ApiKeys.Metadata] = new MetadataHandler(broker, logger),

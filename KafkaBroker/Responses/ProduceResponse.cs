@@ -1,7 +1,12 @@
 namespace KafkaBroker.Responses;
 
-public sealed record ProduceResponse(int CorrelationId, IReadOnlyList<ProduceResponse.TopicResult> Results)
+//ProduceResponse => [TopicName [Partition ErrorCode Offset]]
+// TopicName => string
+// Partition => int32
+// ErrorCode => int16
+// Offset => int64
+public sealed record ProduceResponse(IReadOnlyList<ProduceResponse.TopicResult> Results)
 {
-    public sealed record TopicResult(string Topic, IReadOnlyList<PartitionResult> Partitions);
-    public sealed record PartitionResult(int Partition, short ErrorCode, long BaseOffset);
+    public sealed record TopicResult(string TopicName, IReadOnlyList<PartitionResult> Partitions);
+    public sealed record PartitionResult(int Partition, short ErrorCode, long Offset);
 }
