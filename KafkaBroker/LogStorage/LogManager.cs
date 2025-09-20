@@ -13,6 +13,7 @@ public enum LogMode
 public interface ILogManager
 {
     IPartitionLog GetOrCreate(TopicPartitionKey key);
+    bool TryGet(TopicPartitionKey key, out IPartitionLog log);
 }
 
 public class LogManager : ILogManager, IDisposable
@@ -33,6 +34,9 @@ public class LogManager : ILogManager, IDisposable
     public IPartitionLog GetOrCreate(TopicPartitionKey key)
         => _map.GetOrAdd(key, CreateLog);
 
+    public bool TryGet(TopicPartitionKey key, out IPartitionLog log)
+        => _map.TryGetValue(key, out log!);
+    
     private IPartitionLog CreateLog(TopicPartitionKey key)
     {
         var filePath = ToPartitionPath(_dataDir, key);

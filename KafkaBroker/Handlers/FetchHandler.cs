@@ -1,74 +1,161 @@
+using KafkaBroker.LogStorage;
+using KafkaBroker.Requests;
+using KafkaBroker.Responses;
+using KafkaBroker.Utils;
+using Serilog;
+
 namespace KafkaBroker.Handlers;
 
-public class FetchHandler : IRequestHandler
+public class FetchHandler(ILogManager logManager, ILogger logger): IRequestHandler
 {
-    private readonly LogManager _logs;
+    private readonly ILogger _logger = logger.ForContext<FetchHandler>();
 
-    public FetchHandler(LogManager logs)
+    public void Handle(RequestHeader header, KafkaBinaryReader reader, Stream output)
     {
-        _logs = logs;
+        // 1) Parse FetchRequest
+        var fetchRequest = ParseFetchRequest(reader);
+        var topicResultList = new List<FetchResponse.TopicResult>(fetchRequest.Topics.Count);
+    
+        // 2) Xử lý từng topic/partition
+        foreach (var topicRequest in fetchRequest.Topics)
+        {
+            var partitionResultList = new List<FetchResponse.PartitionResult>(topicRequest.Partitions.Count);
+    
+            foreach (var partitionRequest in topicRequest.Partitions)
+            {
+                try
+                {
+                    var tpKey = new TopicPartitionKey(topicRequest.TopicName, partitionRequest.Partition);
+    
+                    if (!logManager.TryGet(tpKey, out var partitionLog))
+                    {
+                        _logger.Warning(
+                            "Fetch failed: Unknown topic or partition {Topic}-{Partition}",
+                            topicRequest.TopicName, partitionRequest.Partition);
+    
+                        partitionResultList.Add(new FetchResponse.PartitionResult(
+                            partitionRequest.Partition,
+                            (short)ErrorCodes.UnknownTopicOrPartition,
+                            -1,
+                            0,
+                            ReadOnlyMemory<byte>.Empty));
+    
+                        continue;
+                    }
+    
+                    var messageSet = partitionLog
+                        .ReadAsync(partitionRequest.FetchOffset, partitionRequest.MaxBytes)
+                        .GetAwaiter().GetResult();
+    
+                    // TODO: lấy high watermark thực sự từ log (nếu có exposed)
+                    long highWatermarkOffset = 0;
+                    int messageSetSize = messageSet.Length;
+    
+                    partitionResultList.Add(new FetchResponse.PartitionResult(
+                        partitionRequest.Partition,
+                        (short)ErrorCodes.None,
+                        highWatermarkOffset,
+                        messageSetSize,
+                        messageSet));
+                }
+                catch (Exception ex)
+                {
+                    _logger.Error(ex, "Fetch failed for {Topic}-{Partition}",
+                        topicRequest.TopicName, partitionRequest.Partition);
+    
+                    partitionResultList.Add(new FetchResponse.PartitionResult(
+                        partitionRequest.Partition,
+                        (short)ErrorCodes.RequestTimedOut,
+                        -1,
+                        0,
+                        ReadOnlyMemory<byte>.Empty));
+                }
+            }
+    
+            topicResultList.Add(new FetchResponse.TopicResult(topicRequest.TopicName, partitionResultList));
+        }
+    
+        var fetchResponse = new FetchResponse(topicResultList);
+        // 4) Serialize response frame
+        WriteFetchResponseFrame(output, header.CorrelationId, fetchResponse);
     }
 
-    public void Handle(RequestHeader hdr, KafkaBinaryReader r, Stream output)
+    
+    private static FetchRequest ParseFetchRequest(KafkaBinaryReader reader)
     {
-        int replicaId = r.ReadInt32Be(); // -1 from clients
-        int maxWaitMs = r.ReadInt32Be(); // ignored in minimal impl
-        int minBytes = r.ReadInt32Be(); // ignored in minimal impl
-
-        int topicCount = r.ReadInt32Be();
-        var perTopic = new List<(string topic, List<(int part, short err, long hwm, byte[] setBytes)>)>();
-
-        for (int t = 0; t < topicCount; t++)
+        var replicaId   = reader.ReadInt32Be();
+        var maxWaitTime = reader.ReadInt32Be();
+        var minBytes    = reader.ReadInt32Be();
+    
+        var topicCount = reader.ReadInt32Be();
+        var topics = new List<FetchRequest.TopicData>(topicCount);
+    
+        for (var t = 0; t < topicCount; t++)
         {
-            string topic = r.ReadKafkaString();
-            int partCount = r.ReadInt32Be();
-            var partList = new List<(int, short, long, byte[])>(partCount);
-
-            for (int p = 0; p < partCount; p++)
+            var topicName = reader.ReadKafkaString();
+            var partCount = reader.ReadInt32Be();
+            var partitions = new List<FetchRequest.PartitionData>(partCount);
+    
+            for (var p = 0; p < partCount; p++)
             {
-                int partition = r.ReadInt32Be();
-                long fetchOffset = r.ReadInt64Be();
-                int maxBytes = r.ReadInt32Be();
-
-                if (!_logs.TryGetLog(topic, partition, out var log))
-                {
-                    partList.Add((partition, ErrorCodes.UnknownTopicOrPartition, 0L, Array.Empty<byte>()));
-                    continue;
-                }
-
-                var hwm = log!.LatestOffset;
-                var read = log.Read(fetchOffset, maxBytes);
-                if (read == null)
-                {
-                    // offset out of range hoặc không có dữ liệu ở offset đó => trả empty với error nếu offset > hwm
-                    short err = fetchOffset > hwm ? ErrorCodes.OffsetOutOfRange : ErrorCodes.None;
-                    partList.Add((partition, err, hwm, Array.Empty<byte>()));
-                }
-                else
-                {
-                    partList.Add((partition, ErrorCodes.None, hwm, read.Value.bytes));
-                }
+                var partition   = reader.ReadInt32Be();
+                var fetchOffset = reader.ReadInt64Be();
+                var maxBytesForPart = reader.ReadInt32Be();
+    
+                partitions.Add(new FetchRequest.PartitionData(
+                    Partition: partition,
+                    FetchOffset: fetchOffset,
+                    MaxBytes: maxBytesForPart
+                ));
             }
-
-            perTopic.Add((topic, partList));
+    
+            topics.Add(new FetchRequest.TopicData(
+                TopicName: topicName,
+                Partitions: partitions
+            ));
         }
-
-        ResponseWriter.WriteResponse(output, hdr.CorrelationId, w =>
+    
+        return new FetchRequest(replicaId, maxWaitTime, minBytes, topics);
+    }
+    
+    private static void WriteFetchResponseFrame(Stream output, int correlationId, FetchResponse response)
+    {
+        // Serialize body of FetchResponse
+        using var bodyStream = new MemoryStream();
+        var bodyWriter = new KafkaBinaryWriter(bodyStream);
+    
+        bodyWriter.WriteInt32Be(response.Topics.Count);
+        foreach (var topic in response.Topics)
         {
-            w.WriteInt32BE(perTopic.Count);
-            foreach (var t in perTopic)
+            bodyWriter.WriteKafkaString(topic.TopicName);
+            bodyWriter.WriteInt32Be(topic.Partitions.Count);
+    
+            foreach (var part in topic.Partitions)
             {
-                w.WriteKafkaString(t.topic);
-                w.WriteInt32BE(t.Item2.Count);
-                foreach (var pr in t.Item2)
+                bodyWriter.WriteInt32Be(part.Partition);
+                bodyWriter.WriteInt16Be(part.ErrorCode);
+                bodyWriter.WriteInt64Be(part.HighWatermarkOffset);
+    
+                // MessageSetSize + MessageSet bytes
+                bodyWriter.WriteInt32Be(part.MessageSetSize);
+                if (part.MessageSetSize > 0)
                 {
-                    w.WriteInt32BE(pr.part);
-                    w.WriteInt16BE(pr.err);
-                    w.WriteInt64BE(pr.hwm);
-                    w.WriteInt32BE(pr.setBytes.Length);
-                    w.WriteBytes(pr.setBytes);
+                    bodyWriter.WriteBytes(part.MessageSet.ToArray());
                 }
             }
-        });
+        }
+    
+        var bodyBytes = bodyStream.ToArray();
+    
+        // frame = [length:int32][correlationId:int32][body...]
+        using var frameStream = new MemoryStream(capacity: 4 + 4 + bodyBytes.Length);
+        var frameWriter = new KafkaBinaryWriter(frameStream);
+    
+        frameWriter.WriteInt32Be(4 + bodyBytes.Length);   // length = sizeof(correlationId) + body
+        frameWriter.WriteInt32Be(correlationId);          // header
+        frameWriter.WriteBytes(bodyBytes);                 // body
+    
+        var frameBytes = frameStream.ToArray();
+        output.Write(frameBytes, 0, frameBytes.Length);
     }
 }
