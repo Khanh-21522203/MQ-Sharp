@@ -1,6 +1,8 @@
+using KafkaBroker.LogStorage.Interface;
+
 namespace KafkaBroker.LogStorage;
 
-public sealed class FilePartitionLog : IPartitionLog, IDisposable
+public sealed class FilePartitionLog : IPartitionLog, IDisposable, IOffsetIntrospect
 {
     public TopicPartitionKey Key { get; }
     private readonly FileStream _fs;
@@ -32,4 +34,9 @@ public sealed class FilePartitionLog : IPartitionLog, IDisposable
 
     public ValueTask FlushAsync(CancellationToken ct = default) => new(_fs.FlushAsync(ct));
     public void Dispose() => _fs.Dispose();
+    public long GetEarliestOffset() => 0;
+    public long GetLatestOffset()   => _nextOffset;
+    // TODO: implement time index
+    public long FindOffsetByTimestamp(long timestampMs)
+        => throw new NotSupportedException("FilePartitionLog: time index not implemented.");
 }

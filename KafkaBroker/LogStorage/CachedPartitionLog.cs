@@ -1,7 +1,9 @@
+using KafkaBroker.LogStorage.Interface;
+
 namespace KafkaBroker.LogStorage;
 
 // Read-through + write-through cache (file = nguồn chân lý)
-public sealed class CachedPartitionLog(IPartitionLog primary, int cacheCapacity = 1024) : IPartitionLog
+public sealed class CachedPartitionLog(IPartitionLog primary, int cacheCapacity = 1024) : IPartitionLog, IOffsetIntrospect
 {
     public TopicPartitionKey Key => primary.Key;
 
@@ -43,4 +45,13 @@ public sealed class CachedPartitionLog(IPartitionLog primary, int cacheCapacity 
     }
 
     public ValueTask FlushAsync(CancellationToken ct = default) => primary.FlushAsync(ct);
+    
+    public long GetEarliestOffset() => (primary as IOffsetIntrospect)?.GetEarliestOffset() ?? 0;
+    public long GetLatestOffset()   => (primary as IOffsetIntrospect)?.GetLatestOffset()   ?? 0;
+    public long FindOffsetByTimestamp(long timestampMs)
+    {
+        var oi = primary as IOffsetIntrospect
+                 ?? throw new NotSupportedException("Primary does not support timestamp lookup.");
+        return oi.FindOffsetByTimestamp(timestampMs);
+    }
 }

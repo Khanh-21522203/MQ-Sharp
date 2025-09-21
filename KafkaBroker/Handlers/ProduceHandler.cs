@@ -2,6 +2,7 @@ using KafkaBroker.Requests;
 using KafkaBroker.Utils;
 using Serilog;
 using KafkaBroker.LogStorage;
+using KafkaBroker.LogStorage.Interface;
 using KafkaBroker.Responses;
 
 namespace KafkaBroker.Handlers;

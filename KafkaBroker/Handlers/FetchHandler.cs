@@ -1,4 +1,5 @@
 using KafkaBroker.LogStorage;
+using KafkaBroker.LogStorage.Interface;
 using KafkaBroker.Requests;
 using KafkaBroker.Responses;
 using KafkaBroker.Utils;

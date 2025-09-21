@@ -1,71 +1,157 @@
+using KafkaBroker.LogStorage;
+using KafkaBroker.LogStorage.Interface;
+using KafkaBroker.Requests;
+using KafkaBroker.Responses;
+using KafkaBroker.Utils;
+using Serilog;
+
 namespace KafkaBroker.Handlers;
 
-public class ListOffsetsHandler : IRequestHandler
+public class ListOffsetsHandler(ILogManager logManager, ILogger logger) : IRequestHandler
 {
-    private readonly LogManager _logs;
+    private readonly ILogger _logger = logger.ForContext<ListOffsetsHandler>();
 
-    public ListOffsetsHandler(LogManager logs)
+    public void Handle(RequestHeader header, KafkaBinaryReader reader, Stream output)
     {
-        _logs = logs;
-    }
+        // 1) Parse ListOffsetRequest
+        var listReq = ParseListOffsetRequest(reader);
 
-    public void Handle(RequestHeader hdr, KafkaBinaryReader r, Stream output)
-    {
-        int replicaId = r.ReadInt32Be(); // -1
-        int topicCount = r.ReadInt32Be();
+        var topicResultList = new List<ListOffsetResponse.TopicResult>(listReq.Topics.Count);
 
-        var perTopic = new List<(string topic, List<(int part, short err, long[] offsets)>)>();
-
-        for (int t = 0; t < topicCount; t++)
+        // 2) Handle each topic/partition
+        foreach (var topicReq in listReq.Topics)
         {
-            string topic = r.ReadKafkaString();
-            int partCount = r.ReadInt32Be();
-            var parts = new List<(int, short, long[])>(partCount);
+            var partitionOffsetsList = new List<ListOffsetResponse.PartitionOffsets>(topicReq.Partitions.Count);
 
-            for (int p = 0; p < partCount; p++)
+            foreach (var partReq in topicReq.Partitions)
             {
-                int partition = r.ReadInt32Be();
-                long time = r.ReadInt64Be();
-                int maxNum = r.ReadInt32Be();
-
-                if (!_logs.TryGetLog(topic, partition, out var log))
+                try
                 {
-                    parts.Add((partition, ErrorCodes.UnknownTopicOrPartition, Array.Empty<long>()));
-                    continue;
-                }
+                    var key = new TopicPartitionKey(topicReq.TopicName, partReq.Partition);
 
-                long off;
-                if (time == -2) off = log!.EarliestOffset;
-                else if (time == -1) off = log!.LatestOffset;
-                else
+                    if (!logManager.TryGet(key, out var partitionLog))
+                    {
+                        _logger.Warning("ListOffset: unknown topic/partition {Topic}-{Partition}", topicReq.TopicName,
+                            partReq.Partition);
+                        partitionOffsetsList.Add(new ListOffsetResponse.PartitionOffsets(
+                            partReq.Partition,
+                            (short)ErrorCodes.UnknownTopicOrPartition,
+                            []
+                        ));
+                        continue;
+                    }
+
+                    // ---- Resolve offsets by Time ----
+                    // Legacy API: Time = -1 (latest), -2 (earliest), other = timestamp (ms)
+                    long resolvedOffset;
+
+                    if (partReq.Time == -1)
+                    {
+                        resolvedOffset = partitionLog is IOffsetIntrospect o ? o.GetLatestOffset() : 0L;
+                    }
+                    else if (partReq.Time == -2)
+                    {
+                        resolvedOffset = partitionLog is IOffsetIntrospect o2 ? o2.GetEarliestOffset() : 0L;
+                    }
+                    else
+                    {
+                        resolvedOffset = partitionLog is IOffsetIntrospect o3
+                            ? o3.FindOffsetByTimestamp(partReq.Time)
+                            : 0L;
+                    }
+                    
+                    var offsetsToReturn = new List<long>(capacity: 1) { resolvedOffset };
+
+                    partitionOffsetsList.Add(new ListOffsetResponse.PartitionOffsets(
+                        partReq.Partition,
+                        (short)ErrorCodes.None,
+                        offsetsToReturn
+                    ));
+                }
+                catch (Exception ex)
                 {
-                    // timestamp lookup chưa hỗ trợ: trả latest
-                    off = log!.LatestOffset;
+                    _logger.Error(ex, "ListOffset failed for {Topic}-{Partition}", topicReq.TopicName,
+                        partReq.Partition);
+                    partitionOffsetsList.Add(new ListOffsetResponse.PartitionOffsets(
+                        partReq.Partition,
+                        (short)ErrorCodes.RequestTimedOut,
+                        []
+                    ));
                 }
-
-                var arr = new long[] { off };
-                parts.Add((partition, ErrorCodes.None, arr));
             }
 
-            perTopic.Add((topic, parts));
+            topicResultList.Add(new ListOffsetResponse.TopicResult(topicReq.TopicName, partitionOffsetsList));
         }
 
-        ResponseWriter.WriteResponse(output, hdr.CorrelationId, w =>
+        var listResp = new ListOffsetResponse(topicResultList);
+
+        // 3) Serialize frame = [length][correlationId][body]
+        WriteListOffsetResponseFrame(output, header.CorrelationId, listResp);
+    }
+
+
+    private static ListOffsetRequest ParseListOffsetRequest(KafkaBinaryReader reader)
+    {
+        var replicaId = reader.ReadInt32Be();
+
+        var topicCount = reader.ReadInt32Be();
+        var topics = new List<ListOffsetRequest.TopicData>(topicCount);
+
+        for (var t = 0; t < topicCount; t++)
         {
-            w.WriteInt32BE(perTopic.Count);
-            foreach (var t in perTopic)
+            var topicName = reader.ReadKafkaString();
+            var partCount = reader.ReadInt32Be();
+            var parts = new List<ListOffsetRequest.PartitionData>(partCount);
+
+            for (var p = 0; p < partCount; p++)
             {
-                w.WriteKafkaString(t.topic);
-                w.WriteInt32BE(t.Item2.Count);
-                foreach (var pr in t.Item2)
-                {
-                    w.WriteInt32BE(pr.part);
-                    w.WriteInt16BE(pr.err);
-                    // Offsets array
-                    w.WriteInt32BE(pr.offsets.Length);
-                    foreach (var off in pr.offsets) w.WriteInt64BE(off);
-                }
+                var partition = reader.ReadInt32Be();
+                var time = reader.ReadInt64Be();
+                var maxNumberOfOffsets = reader.ReadInt32Be();
+
+                parts.Add(new ListOffsetRequest.PartitionData(partition, time, maxNumberOfOffsets));
             }
-        });
+
+            topics.Add(new ListOffsetRequest.TopicData(topicName, parts));
+        }
+
+        return new ListOffsetRequest(replicaId, topics);
+    }
+
+    private static void WriteListOffsetResponseFrame(Stream output, int correlationId, ListOffsetResponse response)
+    {
+        // Body serialize:
+        using var bodyStream = new MemoryStream();
+        var bodyWriter = new KafkaBinaryWriter(bodyStream);
+
+        bodyWriter.WriteInt32Be(response.Topics.Count);
+        foreach (var topic in response.Topics)
+        {
+            bodyWriter.WriteKafkaString(topic.TopicName);
+            bodyWriter.WriteInt32Be(topic.Partitions.Count);
+
+            foreach (var po in topic.Partitions)
+            {
+                bodyWriter.WriteInt32Be(po.Partition);
+                bodyWriter.WriteInt16Be(po.ErrorCode);
+
+                bodyWriter.WriteInt32Be(po.Offsets.Count);
+                foreach (var off in po.Offsets)
+                    bodyWriter.WriteInt64Be(off);
+            }
+        }
+
+        var bodyBytes = bodyStream.ToArray();
+
+        // Frame = [length:int32][correlationId:int32][body...]
+        using var frameStream = new MemoryStream(capacity: 4 + 4 + bodyBytes.Length);
+        var frameWriter = new KafkaBinaryWriter(frameStream);
+
+        frameWriter.WriteInt32Be(4 + bodyBytes.Length); // length = sizeof(correlationId) + body
+        frameWriter.WriteInt32Be(correlationId); // header
+        frameWriter.WriteBytes(bodyBytes); // body
+
+        var frameBytes = frameStream.ToArray();
+        output.Write(frameBytes, 0, frameBytes.Length);
     }
 }

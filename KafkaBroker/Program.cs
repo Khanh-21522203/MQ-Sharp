@@ -12,28 +12,6 @@ using System.Threading.Tasks;
 using KafkaBroker.Handlers;
 
 
-// Ghi response: buffer vào MemoryStream để tính size, sau đó ghi size + correlationId + body
-static class ResponseWriter
-{
-    public static void WriteResponse(Stream networkStream, int correlationId, Action<KafkaBinaryWriter> writeBody)
-    {
-        using var ms = new MemoryStream();
-        var w = new KafkaBinaryWriter(ms);
-        // Response header: CorrelationId
-        w.WriteInt32BE(correlationId);
-        // Body
-        writeBody(w);
-        // Prepend Size
-        var payload = ms.ToArray();
-        var writer = new KafkaBinaryWriter(networkStream);
-        writer.WriteInt32BE(payload.Length); // size excludes this field itself
-        writer.WriteBytes(payload);
-    }
-}
-
-
-
-
 // ------------------ Program entry ------------------
 public static class Program
 {

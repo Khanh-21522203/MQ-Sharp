@@ -1,4 +1,4 @@
-namespace KafkaBroker.LogStorage;
+namespace KafkaBroker.LogStorage.Interface;
 
 public readonly record struct TopicPartitionKey(string Topic, int Partition);
 
