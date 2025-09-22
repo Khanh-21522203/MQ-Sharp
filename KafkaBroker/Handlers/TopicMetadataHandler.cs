@@ -5,9 +5,9 @@ using Serilog;
 
 namespace KafkaBroker.Handlers;
 
-public class MetadataHandler(ILogger logger, ITopicMetadataManager topicMetadataManager) : IRequestHandler
+public class TopicMetadataHandler(ILogger logger, ITopicMetadataManager topicMetadataManager) : IRequestHandler
 {
-    private readonly ILogger _logger = logger.ForContext<MetadataHandler>();
+    private readonly ILogger _logger = logger.ForContext<TopicMetadataHandler>();
     public void Handle(RequestHeader header, KafkaBinaryReader reader, Stream output)
     {
         try
@@ -35,9 +35,9 @@ public class MetadataHandler(ILogger logger, ITopicMetadataManager topicMetadata
 
             try
             {
-                var empty = new MetadataResponse(
-                    Brokers: new List<MetadataResponse.Broker>(0),
-                    Topics:  new List<MetadataResponse.TopicMetadata>(0)
+                var empty = new TopicMetadataResponse(
+                    Brokers: new List<TopicMetadataResponse.Broker>(0),
+                    Topics:  new List<TopicMetadataResponse.TopicMetadata>(0)
                 );
                 WriteMetadataResponseFrame(output, header.CorrelationId, empty);
             }
@@ -60,7 +60,7 @@ public class MetadataHandler(ILogger logger, ITopicMetadataManager topicMetadata
         return new TopicMetadataRequest(topics);
     }
     
-    private static void WriteMetadataResponseFrame(Stream output, int correlationId, MetadataResponse response)
+    private static void WriteMetadataResponseFrame(Stream output, int correlationId, TopicMetadataResponse response)
     {
         // Body serialize: [Broker][TopicMetadata]
         using var bodyStream = new MemoryStream();

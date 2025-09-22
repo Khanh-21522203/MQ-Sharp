@@ -13,7 +13,7 @@ namespace KafkaBroker.Responses;
 //   Leader => int32
 //   Replicas => [int32]
 //   Isr => [int32]
-public sealed record MetadataResponse(IReadOnlyList<MetadataResponse.Broker> Brokers, IReadOnlyList<MetadataResponse.TopicMetadata> Topics)
+public sealed record TopicMetadataResponse(IReadOnlyList<TopicMetadataResponse.Broker> Brokers, IReadOnlyList<TopicMetadataResponse.TopicMetadata> Topics)
 {
     public sealed record Broker(int NodeId, string Host, int Port);
     public sealed record TopicMetadata(short TopicTopicErrorCode, string TopicName, IReadOnlyList<PartitionMetadata> Partitions);

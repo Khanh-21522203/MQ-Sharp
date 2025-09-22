@@ -1,14 +1,7 @@
 using KafkaBroker.Responses;
+using KafkaBroker.Utils;
 
 namespace KafkaBroker;
-
-public enum KafkaTopicErrorCode : short
-{
-    None = 0,
-    UnknownTopicOrPartition = 3,
-    LeaderNotAvailable = 5,
-    InvalidTopic = 17,
-}
 
 public interface ITopicMetadataManager
 {
@@ -22,10 +15,10 @@ public interface ITopicMetadataManager
     /// <summary>
     /// Retrieves metadata for the specified topics.
     /// If <paramref name="requestedTopics"/> is null or empty, returns metadata for all topics.
-    /// If a topic does not exist, returns a <see cref="MetadataResponse.TopicMetadata"/> with
+    /// If a topic does not exist, returns a <see cref="TopicMetadataResponse.TopicMetadata"/> with
     /// error code UNKNOWN_TOPIC_OR_PARTITION.
     /// </summary>
-    MetadataResponse GetMetadata(IReadOnlyList<string>? requestedTopics);
+    TopicMetadataResponse GetMetadata(IReadOnlyList<string>? requestedTopics);
 }
 
 public sealed class TopicMetadataManager(int nodeId, string host, int port) : ITopicMetadataManager
@@ -62,14 +55,14 @@ public sealed class TopicMetadataManager(int nodeId, string host, int port) : IT
         }
     }
     
-    public MetadataResponse GetMetadata(IReadOnlyList<string>? requestedTopics)
+    public TopicMetadataResponse GetMetadata(IReadOnlyList<string>? requestedTopics)
     {
-        var brokers = new List<MetadataResponse.Broker>
+        var brokers = new List<TopicMetadataResponse.Broker>
         {
             new(nodeId, _host, port)
         };
 
-        List<MetadataResponse.TopicMetadata> topicsMetadata = new();
+        List<TopicMetadataResponse.TopicMetadata> topicsMetadata = new();
 
         _lock.EnterReadLock();
         try
@@ -87,8 +80,8 @@ public sealed class TopicMetadataManager(int nodeId, string host, int port) : IT
                 {
                     if (!_topics.TryGetValue(name, out var partitions))
                     {
-                        topicsMetadata.Add(new MetadataResponse.TopicMetadata(
-                            TopicTopicErrorCode: (short)KafkaTopicErrorCode.UnknownTopicOrPartition,
+                        topicsMetadata.Add(new TopicMetadataResponse.TopicMetadata(
+                            TopicTopicErrorCode: (short)KafkaErrorCode.UnknownTopicOrPartition,
                             TopicName: name,
                             Partitions: []
                         ));
@@ -104,18 +97,18 @@ public sealed class TopicMetadataManager(int nodeId, string host, int port) : IT
             _lock.ExitReadLock();
         }
 
-        return new MetadataResponse(brokers, topicsMetadata);
+        return new TopicMetadataResponse(brokers, topicsMetadata);
     }
 
     // ----------------- Helpers -----------------
 
-    private static MetadataResponse.TopicMetadata BuildTopicMetadata(string topicName, int numPartitions, int nodeId)
+    private static TopicMetadataResponse.TopicMetadata BuildTopicMetadata(string topicName, int numPartitions, int nodeId)
     {
-        var parts = new List<MetadataResponse.PartitionMetadata>(numPartitions);
+        var parts = new List<TopicMetadataResponse.PartitionMetadata>(numPartitions);
         for (int p = 0; p < numPartitions; p++)
         {
-            parts.Add(new MetadataResponse.PartitionMetadata(
-                PartitionErrorCode: (short)KafkaTopicErrorCode.None,
+            parts.Add(new TopicMetadataResponse.PartitionMetadata(
+                PartitionErrorCode: (short)KafkaErrorCode.NoError,
                 PartitionId: p,
                 Leader: nodeId,
                 Replicas: [nodeId],
@@ -123,8 +116,8 @@ public sealed class TopicMetadataManager(int nodeId, string host, int port) : IT
             ));
         }
 
-        return new MetadataResponse.TopicMetadata(
-            TopicTopicErrorCode: (short)KafkaTopicErrorCode.None,
+        return new TopicMetadataResponse.TopicMetadata(
+            TopicTopicErrorCode: (short)KafkaErrorCode.NoError,
             TopicName: topicName,
             Partitions: parts
         );
