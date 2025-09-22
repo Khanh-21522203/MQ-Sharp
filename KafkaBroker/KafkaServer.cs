@@ -14,19 +14,22 @@ public class KafkaServer
     private readonly ILogger _logger;
     private readonly ILogManager _logManager;
 
-    public KafkaServer(IPEndPoint endpoint, ILogger logger, ILogManager logManager)
+    public KafkaServer(
+        IPEndPoint endpoint, 
+        ILogger logger, 
+        ILogManager logManager, 
+        ITopicMetadataManager topicMetadataManager)
     {
         _logger = logger;
         _listener = new TcpListener(endpoint);
         _logManager = logManager;
-        var broker = new Broker(0);
 
         var handlers = new Dictionary<short, IRequestHandler>
         {
             [(short)ApiKeys.Produce] = new ProduceHandler(logManager, logger),
             [(short)ApiKeys.Fetch] = new FetchHandler(logManager, logger),
             [(short)ApiKeys.ListOffsets] = new ListOffsetsHandler(logManager, logger),
-            [(short)ApiKeys.Metadata] = new MetadataHandler(broker, logger),
+            [(short)ApiKeys.Metadata] = new MetadataHandler(logger, topicMetadataManager),
 
             [(short)ApiKeys.FindCoordinator] = new FindCoordinatorHandler(broker, logger),
             [(short)ApiKeys.JoinGroup] = new JoinGroupHandler(broker, logger),

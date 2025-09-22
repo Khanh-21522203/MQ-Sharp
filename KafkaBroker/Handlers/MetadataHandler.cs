@@ -1,56 +1,117 @@
+using KafkaBroker.LogStorage;
+using KafkaBroker.Requests;
+using KafkaBroker.Responses;
+using Serilog;
+
 namespace KafkaBroker.Handlers;
 
-public class MetadataHandler : IRequestHandler
+public class MetadataHandler(ILogger logger, ITopicMetadataManager topicMetadataManager) : IRequestHandler
 {
-    private readonly LogManager _logs;
-    private readonly BrokerInfo _broker;
-
-    public MetadataHandler(LogManager logs, BrokerInfo broker)
+    private readonly ILogger _logger = logger.ForContext<MetadataHandler>();
+    public void Handle(RequestHeader header, KafkaBinaryReader reader, Stream output)
     {
-        _logs = logs;
-        _broker = broker;
-    }
-
-    public void Handle(RequestHeader hdr, KafkaBinaryReader r, Stream output)
-    {
-        int topicCount = r.ReadInt32Be();
-        var topics = new List<string>(topicCount);
-        for (int i = 0; i < topicCount; i++) topics.Add(r.ReadKafkaString());
-        if (topicCount == 0) topics = _logs.AllTopics().ToList();
-
-        ResponseWriter.WriteResponse(output, hdr.CorrelationId, w =>
+        try
         {
-            // Brokers array
-            w.WriteInt32BE(1); // broker count
-            w.WriteInt32BE(_broker.NodeId);
-            w.WriteKafkaString(_broker.Host);
-            w.WriteInt32BE(_broker.Port);
+            var request = ParseTopicMetadataRequest(reader);
 
-            // Topics
-            w.WriteInt32BE(topics.Count);
-            foreach (var t in topics)
+            _logger.Debug(
+                "Handling Metadata request. CorrelationId={CorrelationId}, Topics=[{Topics}]",
+                header.CorrelationId,
+                request.Topics is { Count: > 0 } ? string.Join(",", request.Topics) : "<ALL>"
+            );
+
+            var response = topicMetadataManager.GetMetadata(request.Topics);
+
+            WriteMetadataResponseFrame(output, header.CorrelationId, response);
+
+            _logger.Debug(
+                "Metadata response sent. CorrelationId={CorrelationId}, Brokers={BrokerCount}, Topics={TopicCount}",
+                header.CorrelationId, response.Brokers.Count, response.Topics.Count
+            );
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex, "Failed to handle Metadata request. CorrelationId={CorrelationId}", header.CorrelationId);
+
+            try
             {
-                // Auto-create nếu chưa có
-                _logs.EnsureTopic(t, partitions: 1);
-
-                w.WriteInt16BE(ErrorCodes.None); // TopicErrorCode
-                w.WriteKafkaString(t);
-
-                var parts = _logs.GetPartitions(t);
-                w.WriteInt32BE(parts.Length); // Partition array count
-                foreach (var pid in parts)
-                {
-                    w.WriteInt16BE(ErrorCodes.None); // PartitionErrorCode
-                    w.WriteInt32BE(pid); // PartitionId
-                    w.WriteInt32BE(_broker.NodeId); // Leader
-                    // Replicas
-                    w.WriteInt32BE(1);
-                    w.WriteInt32BE(_broker.NodeId);
-                    // ISR
-                    w.WriteInt32BE(1);
-                    w.WriteInt32BE(_broker.NodeId);
-                }
+                var empty = new MetadataResponse(
+                    Brokers: new List<MetadataResponse.Broker>(0),
+                    Topics:  new List<MetadataResponse.TopicMetadata>(0)
+                );
+                WriteMetadataResponseFrame(output, header.CorrelationId, empty);
             }
-        });
+            catch (Exception writeEx)
+            {
+                _logger.Error(writeEx, "Failed to write fallback Metadata response. CorrelationId={CorrelationId}", header.CorrelationId);
+                throw;
+            }
+        }
+    }
+    
+    private static TopicMetadataRequest ParseTopicMetadataRequest(KafkaBinaryReader reader)
+    {
+        var topicCount = reader.ReadInt32Be();
+        var topics = new List<string>(topicCount);
+
+        for (var i = 0; i < topicCount; i++)
+            topics.Add(reader.ReadKafkaString());
+
+        return new TopicMetadataRequest(topics);
+    }
+    
+    private static void WriteMetadataResponseFrame(Stream output, int correlationId, MetadataResponse response)
+    {
+        // Body serialize: [Broker][TopicMetadata]
+        using var bodyStream = new MemoryStream();
+        var bodyWriter = new KafkaBinaryWriter(bodyStream);
+
+        // [Broker]
+        bodyWriter.WriteInt32Be(response.Brokers.Count);
+        foreach (var broker in response.Brokers)
+        {
+            bodyWriter.WriteInt32Be(broker.NodeId);
+            bodyWriter.WriteKafkaString(broker.Host);
+            bodyWriter.WriteInt32Be(broker.Port);
+        }
+
+        // [TopicMetadata]
+        bodyWriter.WriteInt32Be(response.Topics.Count);
+        foreach (var topicMeta in response.Topics)
+        {
+            bodyWriter.WriteInt16Be(topicMeta.TopicTopicErrorCode);
+            bodyWriter.WriteKafkaString(topicMeta.TopicName);
+
+            bodyWriter.WriteInt32Be(topicMeta.Partitions.Count);
+            foreach (var pm in topicMeta.Partitions)
+            {
+                bodyWriter.WriteInt16Be(pm.PartitionErrorCode);
+                bodyWriter.WriteInt32Be(pm.PartitionId);
+                bodyWriter.WriteInt32Be(pm.Leader);
+
+                // Replicas => [int32]
+                bodyWriter.WriteInt32Be(pm.Replicas.Count);
+                foreach (var r in pm.Replicas)
+                    bodyWriter.WriteInt32Be(r);
+
+                // Isr => [int32]
+                bodyWriter.WriteInt32Be(pm.Isr.Count);
+                foreach (var isr in pm.Isr)
+                    bodyWriter.WriteInt32Be(isr);
+            }
+        }
+
+        var bodyBytes = bodyStream.ToArray();
+
+        // Frame = [length:int32][correlationId:int32][body...]
+        using var frameStream = new MemoryStream(capacity: 4 + 4 + bodyBytes.Length);
+        var frameWriter = new KafkaBinaryWriter(frameStream);
+
+        frameWriter.WriteInt32Be(4 + bodyBytes.Length); // length = sizeof(correlationId) + body
+        frameWriter.WriteInt32Be(correlationId);
+        frameWriter.WriteBytes(bodyBytes);
+
+        var frameBytes = frameStream.ToArray();
+        output.Write(frameBytes, 0, frameBytes.Length);
     }
 }
