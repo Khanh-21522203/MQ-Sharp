@@ -5,7 +5,7 @@ using Serilog;
 
 namespace KafkaBroker.Handlers;
 
-public class GroupCoordinatorHandler(ILogger logger, IGroupCoordinatorManager groupManager) : IRequestHandler
+public class GroupCoordinatorHandler(ILogger logger, IGroupManager groupManager) : IRequestHandler
 {
     private readonly ILogger _logger = logger.ForContext<GroupCoordinatorHandler>();
 

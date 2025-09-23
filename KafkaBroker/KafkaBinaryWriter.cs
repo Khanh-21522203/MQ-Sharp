@@ -40,6 +40,21 @@ public class KafkaBinaryWriter(Stream stream)
         WriteInt16Be((short)bytes.Length);
         _stream.Write(bytes, 0, bytes.Length);
     }
+    
+    public void WriteKafkaBytes(byte[]? b)
+    {
+        if (b == null)
+        {
+            WriteInt32Be(-1);
+            return;
+        }
+
+        WriteInt32Be(b.Length);
+        if (b.Length > 0)
+        {
+            _stream.Write(b, 0, b.Length);
+        }
+    }
 
     public void WriteBytes(byte[] b) => _stream.Write(b, 0, b.Length);
 }

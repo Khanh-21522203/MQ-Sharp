@@ -1,62 +1,105 @@
-using System.Text;
-using KafkaBroker.GroupCoordinator;
+using KafkaBroker.Requests;
+using KafkaBroker.Responses;
+using KafkaBroker.Utils;
+using Serilog;
 
 namespace KafkaBroker.Handlers;
 
-sealed class JoinGroupHandler : IRequestHandler
+sealed class JoinGroupHandler(ILogger logger, IGroupManager groupManager): IRequestHandler
 {
-    private readonly GroupCoordinator _coord;
+    private readonly ILogger _logger = logger.ForContext<GroupCoordinatorHandler>();
 
-    public JoinGroupHandler(GroupCoordinator coord)
+    public void Handle(RequestHeader header, KafkaBinaryReader reader, Stream output)
     {
-        _coord = coord;
-    }
-
-    public void Handle(RequestHeader hdr, KafkaBinaryReader r, Stream output)
-    {
-        string groupId = r.ReadKafkaString();
-        int sessionTimeoutMs = r.ReadInt32Be(); // bỏ qua
-        string memberId = r.ReadKafkaString(); // "" hoặc member-xxx
-        string protocolType = r.ReadKafkaString(); // "consumer"
-        int subCount = r.ReadInt32Be();
-        var subs = new List<string>(subCount);
-        for (int i = 0; i < subCount; i++) subs.Add(r.ReadKafkaString());
-
-        var g = _coord.GetOrCreate(groupId);
-
-        if (string.IsNullOrEmpty(memberId) || !g.Members.ContainsKey(memberId))
-            memberId = _coord.NewMemberId();
-
-        if (!g.Members.TryGetValue(memberId, out var m))
+        try
         {
-            m = new GroupMember { MemberId = memberId, ClientId = hdr.ClientId };
-            g.Members[memberId] = m;
-            _coord.StartRebalance(g); // thành viên thay đổi => bump generation
-            if (string.IsNullOrEmpty(g.LeaderMemberId)) g.LeaderMemberId = memberId;
+            var request = ParseJoinGroupRequest(reader);
+
+            _logger.Debug("JoinGroup: corrId={CorrelationId}, group={Group}, member={Member}, protoType={Type}, protos={Count}",
+                header.CorrelationId, request.GroupId, string.IsNullOrEmpty(request.MemberId) ? "<EMPTY>" : request.MemberId,
+                request.ProtocolType, request.GroupProtocols.Count);
+
+            var response = groupManager.JoinGroup(request);
+
+            WriteJoinGroupResponseFrame(output, header.CorrelationId, response);
+
+            _logger.Debug("JoinGroup DONE: corrId={CorrelationId}, gen={Gen}, leader={Leader}, members={Count}",
+                header.CorrelationId, response.GenerationId, response.LeaderId, response.Members.Count);
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex, "JoinGroup failed: corrId={CorrelationId}", header.CorrelationId);
+
+            var fail = new JoinGroupResponse(
+                ErrorCode: (short)KafkaErrorCode.Unknown,
+                GenerationId: 0,
+                GroupProtocol: string.Empty,
+                LeaderId: string.Empty,
+                MemberId: string.Empty,
+                Members: []
+            );
+            WriteJoinGroupResponseFrame(output, header.CorrelationId, fail);
+            throw;
+        }
+    }
+    
+    private static JoinGroupRequest ParseJoinGroupRequest(KafkaBinaryReader reader)
+    {
+        var groupId        = reader.ReadKafkaString();
+        var sessionTimeout = reader.ReadInt32Be();
+
+        var memberId     = reader.ReadKafkaString();
+        var protocolType = reader.ReadKafkaString();
+
+        var protoCount = reader.ReadInt32Be();
+        var protocols = new List<JoinGroupRequest.JoinGroupProtocol>(protoCount);
+        for (var i = 0; i < protoCount; i++)
+        {
+            var name = reader.ReadKafkaString();
+            var meta = reader.ReadKafkaBytes(); // length-prefixed bytes
+            protocols.Add(new JoinGroupRequest.JoinGroupProtocol(name, meta ?? []));
         }
 
-        m.Subscriptions = subs;
-        m.LastHeartbeatUtc = DateTime.UtcNow;
+        return new JoinGroupRequest(
+            GroupId: groupId,
+            SessionTimeout: sessionTimeout,
+            MemberId: memberId,
+            ProtocolType: protocolType,
+            GroupProtocols: protocols
+        );
+    }
 
-        // Trả JoinGroupResponse tối giản:
-        // Error:int16, GenerationId:int32, GroupProtocol:string, LeaderId:string, MemberId:string, MembersCount:int32, [MemberId, MemberMetadata(bytes?)]
-        ResponseWriter.WriteResponse(output, hdr.CorrelationId, w =>
+    private static void WriteJoinGroupResponseFrame(Stream output, int correlationId, JoinGroupResponse resp)
+    {
+        using var bodyStream = new MemoryStream();
+        var w = new KafkaBinaryWriter(bodyStream);
+
+        w.WriteInt16Be(resp.ErrorCode);
+        w.WriteInt32Be(resp.GenerationId);
+        w.WriteKafkaString(resp.GroupProtocol);
+        w.WriteKafkaString(resp.LeaderId);
+        w.WriteKafkaString(resp.MemberId);
+
+        w.WriteInt32Be(resp.Members?.Count ?? 0);
+        if (resp.Members is not null)
         {
-            w.WriteInt16BE(g.RebalanceInProgress ? ErrorCodes.None : ErrorCodes.None);
-            w.WriteInt32BE(g.GenerationId);
-            w.WriteKafkaString(g.ProtocolName);
-            w.WriteKafkaString(g.LeaderMemberId);
-            w.WriteKafkaString(memberId);
-
-            // Trả metadata các member (đơn giản: chỉ tên + subscriptions dưới dạng csv bytes)
-            w.WriteInt32BE(g.Members.Count);
-            foreach (var kv in g.Members)
+            foreach (var m in resp.Members)
             {
-                w.WriteKafkaString(kv.Key); // memberId
-                var md = Encoding.UTF8.GetBytes(string.Join(",", kv.Value.Subscriptions));
-                w.WriteInt32BE(md.Length);
-                w.WriteBytes(md);
+                w.WriteKafkaString(m.MemberId);
+                w.WriteKafkaBytes(m.MemberMetadata);
             }
-        });
+        }
+
+        var body = bodyStream.ToArray();
+
+        using var frameStream = new MemoryStream(capacity: 4 + 4 + body.Length);
+        var fw = new KafkaBinaryWriter(frameStream);
+
+        fw.WriteInt32Be(4 + body.Length); // length = sizeof(correlationId) + body
+        fw.WriteInt32Be(correlationId);
+        fw.WriteBytes(body);
+
+        var frame = frameStream.ToArray();
+        output.Write(frame, 0, frame.Length);
     }
 }

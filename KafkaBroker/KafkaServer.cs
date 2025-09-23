@@ -19,7 +19,7 @@ public class KafkaServer
         ILogger logger, 
         ILogManager logManager, 
         ITopicMetadataManager topicMetadataManager,
-        IGroupCoordinatorManager groupCoordinatorManager)
+        IGroupManager groupManager)
     {
         _logger = logger;
         _listener = new TcpListener(endpoint);
@@ -32,8 +32,8 @@ public class KafkaServer
             [(short)ApiKeys.ListOffsets] = new ListOffsetsHandler(logManager, logger),
             [(short)ApiKeys.Metadata] = new TopicMetadataHandler(logger, topicMetadataManager),
 
-            [(short)ApiKeys.FindCoordinator] = new GroupCoordinatorHandler(logger, groupCoordinatorManager),
-            [(short)ApiKeys.JoinGroup] = new JoinGroupHandler(broker, logger),
+            [(short)ApiKeys.FindCoordinator] = new GroupCoordinatorHandler(logger, groupManager),
+            [(short)ApiKeys.JoinGroup] = new JoinGroupHandler(logger, groupManager),
             [(short)ApiKeys.Heartbeat] = new HeartbeatHandler(broker, logger),
             [(short)ApiKeys.LeaveGroup] = new LeaveGroupHandler(broker, logger),
             [(short)ApiKeys.SyncGroup] = new SyncGroupHandler(broker, logger),
