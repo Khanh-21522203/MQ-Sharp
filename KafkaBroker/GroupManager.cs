@@ -20,6 +20,11 @@ public interface IGroupManager
     /// elect a new leader if any member remains; bump generation accordingly.
     /// </summary>
     LeaveGroupResponse LeaveGroup(LeaveGroupRequest req);
+
+    /// <summary>
+    /// Apply leader's group assignment (if provided) and return this member's assignment blob.
+    /// </summary>
+    SyncGroupResponse SyncGroup(SyncGroupRequest req);
 }
 
 public sealed class GroupManager(int nodeId, string host, int port) : IGroupManager
@@ -33,6 +38,9 @@ public sealed class GroupManager(int nodeId, string host, int port) : IGroupMana
 
         public readonly Dictionary<string, byte[]>
             Members = new(); // memberId -> last provided metadata (of chosen protocol)
+
+        // Assignment hiện tại: memberId -> assignment bytes
+        public readonly Dictionary<string, byte[]> Assignments = new(StringComparer.Ordinal);
     }
 
     private readonly Dictionary<string, GroupState> _groups = new(StringComparer.Ordinal);
@@ -172,4 +180,51 @@ public sealed class GroupManager(int nodeId, string host, int port) : IGroupMana
             MemberId: memberId ?? string.Empty,
             Members: []
         );
+
+    public SyncGroupResponse SyncGroup(SyncGroupRequest req)
+    {
+        if (string.IsNullOrEmpty(req.GroupId) || string.IsNullOrEmpty(req.MemberId))
+            return new SyncGroupResponse((short)KafkaErrorCode.UnknownMemberId, ReadOnlyMemory<byte>.Empty);
+
+        lock (_lock)
+        {
+            if (!_groups.TryGetValue(req.GroupId, out var state))
+                return new SyncGroupResponse((short)KafkaErrorCode.UnknownMemberId, ReadOnlyMemory<byte>.Empty);
+
+            // Validate member
+            if (!state.Members.ContainsKey(req.MemberId))
+                return new SyncGroupResponse((short)KafkaErrorCode.UnknownMemberId, ReadOnlyMemory<byte>.Empty);
+
+            // Validate generation (đơn giản: phải đúng với state hiện tại)
+            if (req.GenerationId != state.GenerationId)
+                return new SyncGroupResponse((short)KafkaErrorCode.IllegalGeneration, ReadOnlyMemory<byte>.Empty);
+
+            // Nếu leader gửi GroupAssignment (count > 0) → cập nhật assignments
+            if (req.GroupAssignment is { Count: > 0 })
+            {
+                // (Optionally) chỉ cho phép leader push; ở đây kiểm tra nhẹ:
+                if (!string.Equals(req.MemberId, state.LeaderId, StringComparison.Ordinal))
+                {
+                    return new SyncGroupResponse((short)KafkaErrorCode.RebalanceInProgress, ReadOnlyMemory<byte>.Empty);
+                }
+
+                state.Assignments.Clear();
+                foreach (var a in req.GroupAssignment)
+                {
+                    state.Assignments[a.MemberId] = a.MemberAssignment.ToArray();
+                }
+                // Tùy policy có thể bump generation sau sync; ở đây giữ nguyên để đơn giản.
+            }
+
+            // Trả assignment cho member hiện tại (có thể rỗng nếu leader chưa push)
+            if (state.Assignments.TryGetValue(req.MemberId, out var bytes))
+            {
+                return new SyncGroupResponse((short)KafkaErrorCode.NoError, bytes);
+            }
+            else
+            {
+                return new SyncGroupResponse((short)KafkaErrorCode.NoError, ReadOnlyMemory<byte>.Empty);
+            }
+        }
+    }
 }

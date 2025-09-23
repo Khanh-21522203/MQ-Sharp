@@ -24,7 +24,7 @@ public sealed class OffsetCommitHandler(ILogger logger, IOffsetStore offsetStore
             throw;
         }
     }
-    
+
     private static OffsetCommitRequest ParseOffsetCommitRequest(KafkaBinaryReader reader)
     {
         var consumerGroupId = reader.ReadKafkaString();
@@ -81,5 +81,4 @@ public sealed class OffsetCommitHandler(ILogger logger, IOffsetStore offsetStore
         var frame = frameStream.ToArray();
         output.Write(frame, 0, frame.Length);
     }
-
 }

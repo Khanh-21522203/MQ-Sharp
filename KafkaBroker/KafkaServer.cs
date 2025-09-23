@@ -37,10 +37,10 @@ public class KafkaServer
             [(short)ApiKeys.JoinGroup] = new JoinGroupHandler(logger, groupManager),
             [(short)ApiKeys.Heartbeat] = new HeartbeatHandler(logger),
             [(short)ApiKeys.LeaveGroup] = new LeaveGroupHandler(logger, groupManager),
-            [(short)ApiKeys.SyncGroup] = new SyncGroupHandler(broker, logger),
+            [(short)ApiKeys.SyncGroup] = new SyncGroupHandler(logger, groupManager),
 
             [(short)ApiKeys.OffsetCommit] = new OffsetCommitHandler(logger, offsetStore),
-            [(short)ApiKeys.OffsetFetch] = new OffsetFetchHandler(broker, logger)
+            [(short)ApiKeys.OffsetFetch] = new OffsetFetchHandler(logger, offsetStore)
         };
 
         _dispatcher = new Dispatcher(handlers, logger);

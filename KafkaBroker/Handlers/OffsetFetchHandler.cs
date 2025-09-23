@@ -4,7 +4,7 @@ using Serilog;
 
 namespace KafkaBroker.Handlers;
 
-sealed class OffsetFetchHandler(ILogger logger, IOffsetStore offsetStore): IRequestHandler
+sealed class OffsetFetchHandler(ILogger logger, IOffsetStore offsetStore) : IRequestHandler
 {
     private readonly ILogger _logger = logger.ForContext<OffsetFetchHandler>();
 
@@ -37,7 +37,7 @@ sealed class OffsetFetchHandler(ILogger logger, IOffsetStore offsetStore): IRequ
             throw;
         }
     }
-    
+
     private static OffsetFetchRequest ParseOffsetFetchRequest(KafkaBinaryReader reader)
     {
         var groupId = reader.ReadKafkaString();
@@ -53,6 +53,7 @@ sealed class OffsetFetchHandler(ILogger logger, IOffsetStore offsetStore): IRequ
             {
                 parts.Add(reader.ReadInt32Be());
             }
+
             topics.Add(new OffsetFetchRequest.TopicData(topicName, parts));
         }
 
@@ -90,5 +91,4 @@ sealed class OffsetFetchHandler(ILogger logger, IOffsetStore offsetStore): IRequ
         var frame = frameStream.ToArray();
         output.Write(frame, 0, frame.Length);
     }
-
 }
