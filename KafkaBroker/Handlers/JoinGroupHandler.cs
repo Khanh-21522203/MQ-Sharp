@@ -7,7 +7,7 @@ namespace KafkaBroker.Handlers;
 
 sealed class JoinGroupHandler(ILogger logger, IGroupManager groupManager): IRequestHandler
 {
-    private readonly ILogger _logger = logger.ForContext<GroupCoordinatorHandler>();
+    private readonly ILogger _logger = logger.ForContext<JoinGroupHandler>();
 
     public void Handle(RequestHeader header, KafkaBinaryReader reader, Stream output)
     {

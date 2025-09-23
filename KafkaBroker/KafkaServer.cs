@@ -34,7 +34,7 @@ public class KafkaServer
 
             [(short)ApiKeys.FindCoordinator] = new GroupCoordinatorHandler(logger, groupManager),
             [(short)ApiKeys.JoinGroup] = new JoinGroupHandler(logger, groupManager),
-            [(short)ApiKeys.Heartbeat] = new HeartbeatHandler(broker, logger),
+            [(short)ApiKeys.Heartbeat] = new HeartbeatHandler(logger),
             [(short)ApiKeys.LeaveGroup] = new LeaveGroupHandler(broker, logger),
             [(short)ApiKeys.SyncGroup] = new SyncGroupHandler(broker, logger),
 
