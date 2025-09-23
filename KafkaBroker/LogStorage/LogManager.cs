@@ -37,7 +37,7 @@ public class LogManager : ILogManager, IDisposable
 
     public bool TryGet(TopicPartitionKey key, out IPartitionLog log)
         => _map.TryGetValue(key, out log!);
-    
+
     private IPartitionLog CreateLog(TopicPartitionKey key)
     {
         var filePath = ToPartitionPath(_dataDir, key);

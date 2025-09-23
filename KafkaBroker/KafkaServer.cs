@@ -15,9 +15,9 @@ public class KafkaServer
     private readonly ILogManager _logManager;
 
     public KafkaServer(
-        IPEndPoint endpoint, 
-        ILogger logger, 
-        ILogManager logManager, 
+        IPEndPoint endpoint,
+        ILogger logger,
+        ILogManager logManager,
         ITopicMetadataManager topicMetadataManager,
         IGroupManager groupManager)
     {
@@ -35,7 +35,7 @@ public class KafkaServer
             [(short)ApiKeys.FindCoordinator] = new GroupCoordinatorHandler(logger, groupManager),
             [(short)ApiKeys.JoinGroup] = new JoinGroupHandler(logger, groupManager),
             [(short)ApiKeys.Heartbeat] = new HeartbeatHandler(logger),
-            [(short)ApiKeys.LeaveGroup] = new LeaveGroupHandler(broker, logger),
+            [(short)ApiKeys.LeaveGroup] = new LeaveGroupHandler(logger, groupManager),
             [(short)ApiKeys.SyncGroup] = new SyncGroupHandler(broker, logger),
 
             [(short)ApiKeys.OffsetCommit] = new OffsetCommitHandler(broker, logger),

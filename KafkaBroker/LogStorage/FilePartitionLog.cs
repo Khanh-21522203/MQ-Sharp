@@ -35,7 +35,9 @@ public sealed class FilePartitionLog : IPartitionLog, IDisposable, IOffsetIntros
     public ValueTask FlushAsync(CancellationToken ct = default) => new(_fs.FlushAsync(ct));
     public void Dispose() => _fs.Dispose();
     public long GetEarliestOffset() => 0;
-    public long GetLatestOffset()   => _nextOffset;
+
+    public long GetLatestOffset() => _nextOffset;
+
     // TODO: implement time index
     public long FindOffsetByTimestamp(long timestampMs)
         => throw new NotSupportedException("FilePartitionLog: time index not implemented.");

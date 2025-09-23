@@ -59,7 +59,7 @@ public class ListOffsetsHandler(ILogManager logManager, ILogger logger) : IReque
                             ? o3.FindOffsetByTimestamp(partReq.Time)
                             : 0L;
                     }
-                    
+
                     var offsetsToReturn = new List<long>(capacity: 1) { resolvedOffset };
 
                     partitionOffsetsList.Add(new ListOffsetResponse.PartitionOffsets(

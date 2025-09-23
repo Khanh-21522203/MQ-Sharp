@@ -32,7 +32,8 @@ public class GroupCoordinatorHandler(ILogger logger, IGroupManager groupManager)
         }
         catch (Exception ex)
         {
-            _logger.Error(ex, "Failed to handle GroupCoordinator request. CorrelationId={CorrelationId}", header.CorrelationId);
+            _logger.Error(ex, "Failed to handle GroupCoordinator request. CorrelationId={CorrelationId}",
+                header.CorrelationId);
 
             // Best-effort fallback; upstream may close the connection anyway.
             var fail = new GroupCoordinatorResponse(
@@ -45,15 +46,16 @@ public class GroupCoordinatorHandler(ILogger logger, IGroupManager groupManager)
             throw;
         }
     }
-    
+
     private static GroupCoordinatorRequest ParseGroupCoordinatorRequest(KafkaBinaryReader reader)
     {
         // Only one field in v0: GroupId
         var groupId = reader.ReadKafkaString();
         return new GroupCoordinatorRequest(groupId);
     }
-    
-    private static void WriteGroupCoordinatorResponseFrame(Stream output, int correlationId, GroupCoordinatorResponse response)
+
+    private static void WriteGroupCoordinatorResponseFrame(Stream output, int correlationId,
+        GroupCoordinatorResponse response)
     {
         // ---- Serialize body ----
         using var bodyStream = new MemoryStream();
@@ -71,8 +73,8 @@ public class GroupCoordinatorHandler(ILogger logger, IGroupManager groupManager)
         var frameWriter = new KafkaBinaryWriter(frameStream);
 
         frameWriter.WriteInt32Be(4 + bodyBytes.Length); // length = sizeof(correlationId) + body
-        frameWriter.WriteInt32Be(correlationId);        // header
-        frameWriter.WriteBytes(bodyBytes);              // body
+        frameWriter.WriteInt32Be(correlationId); // header
+        frameWriter.WriteBytes(bodyBytes); // body
 
         var frameBytes = frameStream.ToArray();
         output.Write(frameBytes, 0, frameBytes.Length);

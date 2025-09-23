@@ -27,7 +27,7 @@ public sealed class TopicMetadataManager(int nodeId, string host, int port) : IT
 
     private readonly Dictionary<string, int> _topics = new(StringComparer.Ordinal);
     private readonly ReaderWriterLockSlim _lock = new(LockRecursionPolicy.NoRecursion);
-    
+
     public void EnsureTopic(string topicName, int numPartitions)
     {
         if (string.IsNullOrWhiteSpace(topicName))
@@ -54,7 +54,7 @@ public sealed class TopicMetadataManager(int nodeId, string host, int port) : IT
             _lock.ExitWriteLock();
         }
     }
-    
+
     public TopicMetadataResponse GetMetadata(IReadOnlyList<string>? requestedTopics)
     {
         var brokers = new List<TopicMetadataResponse.Broker>
@@ -102,7 +102,8 @@ public sealed class TopicMetadataManager(int nodeId, string host, int port) : IT
 
     // ----------------- Helpers -----------------
 
-    private static TopicMetadataResponse.TopicMetadata BuildTopicMetadata(string topicName, int numPartitions, int nodeId)
+    private static TopicMetadataResponse.TopicMetadata BuildTopicMetadata(string topicName, int numPartitions,
+        int nodeId)
     {
         var parts = new List<TopicMetadataResponse.PartitionMetadata>(numPartitions);
         for (int p = 0; p < numPartitions; p++)

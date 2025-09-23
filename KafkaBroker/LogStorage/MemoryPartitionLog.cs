@@ -18,14 +18,16 @@ public sealed class MemoryPartitionLog(TopicPartitionKey key) : IPartitionLog, I
     public ValueTask<ReadOnlyMemory<byte>> ReadAsync(long offset, int maxBytes, CancellationToken ct = default)
     {
         var i = _batches.FindIndex(t => t.Off == offset);
-        return i < 0 
-            ? ValueTask.FromResult(ReadOnlyMemory<byte>.Empty) 
+        return i < 0
+            ? ValueTask.FromResult(ReadOnlyMemory<byte>.Empty)
             : ValueTask.FromResult((ReadOnlyMemory<byte>)_batches[i].Data);
     }
 
     public ValueTask FlushAsync(CancellationToken ct = default) => ValueTask.CompletedTask;
-    public long GetEarliestOffset() => 0;  // TODO: update nếu có retention xoá đầu
-    public long GetLatestOffset()   => _nextOffset;
+    public long GetEarliestOffset() => 0; // TODO: update nếu có retention xoá đầu
+
+    public long GetLatestOffset() => _nextOffset;
+
     // TODO: implement time index
     public long FindOffsetByTimestamp(long timestampMs)
         => throw new NotSupportedException("MemoryPartitionLog: time index not implemented.");

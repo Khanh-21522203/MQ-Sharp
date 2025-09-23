@@ -9,5 +9,11 @@ namespace KafkaBroker.Responses;
 public sealed record FetchResponse(IReadOnlyList<FetchResponse.TopicResult> Topics)
 {
     public sealed record TopicResult(string TopicName, IReadOnlyList<PartitionResult> Partitions);
-    public sealed record PartitionResult(int Partition, short ErrorCode, long HighWatermarkOffset, int MessageSetSize, ReadOnlyMemory<byte> MessageSet);
+
+    public sealed record PartitionResult(
+        int Partition,
+        short ErrorCode,
+        long HighWatermarkOffset,
+        int MessageSetSize,
+        ReadOnlyMemory<byte> MessageSet);
 }

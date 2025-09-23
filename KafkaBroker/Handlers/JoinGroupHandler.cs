@@ -5,7 +5,7 @@ using Serilog;
 
 namespace KafkaBroker.Handlers;
 
-sealed class JoinGroupHandler(ILogger logger, IGroupManager groupManager): IRequestHandler
+sealed class JoinGroupHandler(ILogger logger, IGroupManager groupManager) : IRequestHandler
 {
     private readonly ILogger _logger = logger.ForContext<JoinGroupHandler>();
 
@@ -15,8 +15,10 @@ sealed class JoinGroupHandler(ILogger logger, IGroupManager groupManager): IRequ
         {
             var request = ParseJoinGroupRequest(reader);
 
-            _logger.Debug("JoinGroup: corrId={CorrelationId}, group={Group}, member={Member}, protoType={Type}, protos={Count}",
-                header.CorrelationId, request.GroupId, string.IsNullOrEmpty(request.MemberId) ? "<EMPTY>" : request.MemberId,
+            _logger.Debug(
+                "JoinGroup: corrId={CorrelationId}, group={Group}, member={Member}, protoType={Type}, protos={Count}",
+                header.CorrelationId, request.GroupId,
+                string.IsNullOrEmpty(request.MemberId) ? "<EMPTY>" : request.MemberId,
                 request.ProtocolType, request.GroupProtocols.Count);
 
             var response = groupManager.JoinGroup(request);
@@ -42,13 +44,13 @@ sealed class JoinGroupHandler(ILogger logger, IGroupManager groupManager): IRequ
             throw;
         }
     }
-    
+
     private static JoinGroupRequest ParseJoinGroupRequest(KafkaBinaryReader reader)
     {
-        var groupId        = reader.ReadKafkaString();
+        var groupId = reader.ReadKafkaString();
         var sessionTimeout = reader.ReadInt32Be();
 
-        var memberId     = reader.ReadKafkaString();
+        var memberId = reader.ReadKafkaString();
         var protocolType = reader.ReadKafkaString();
 
         var protoCount = reader.ReadInt32Be();

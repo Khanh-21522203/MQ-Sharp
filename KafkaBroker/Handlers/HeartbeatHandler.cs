@@ -56,7 +56,7 @@ sealed class HeartbeatHandler(ILogger logger) : IRequestHandler
             return (short)KafkaErrorCode.UnknownMemberId;
         }
     }
-    
+
     private static HeartbeatRequest ParseHeartbeatRequest(KafkaBinaryReader reader)
     {
         var groupId = reader.ReadKafkaString();

@@ -37,6 +37,7 @@ public class KafkaBinaryReader(Stream stream) : IDisposable
         Fill(buf);
         return Encoding.UTF8.GetString(buf);
     }
+
     public byte[]? ReadKafkaBytes()
     {
         int len = ReadInt32Be();

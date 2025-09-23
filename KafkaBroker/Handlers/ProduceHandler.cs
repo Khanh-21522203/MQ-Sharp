@@ -7,7 +7,6 @@ using KafkaBroker.Responses;
 
 namespace KafkaBroker.Handlers;
 
-
 public sealed class ProduceHandler(ILogManager logManager, ILogger logger) : IRequestHandler
 {
     private readonly ILogger _logger = logger.ForContext<ProduceHandler>();
@@ -29,12 +28,14 @@ public sealed class ProduceHandler(ILogManager logManager, ILogger logger) : IRe
                 {
                     var logStore = logManager.GetOrCreate(key);
                     var baseOffset = logStore.AppendAsync(p.MessageSet).GetAwaiter().GetResult();
-                    partResults.Add(new ProduceResponse.PartitionResult(p.Partition, (short)ErrorCodes.None, baseOffset));
+                    partResults.Add(
+                        new ProduceResponse.PartitionResult(p.Partition, (short)ErrorCodes.None, baseOffset));
                 }
                 catch (Exception ex)
                 {
                     _logger.Error(ex, "Produce append failed for {Topic}-{Partition}", key.Topic, key.Partition);
-                    partResults.Add(new ProduceResponse.PartitionResult(p.Partition, (short)ErrorCodes.RequestTimedOut, -1));
+                    partResults.Add(
+                        new ProduceResponse.PartitionResult(p.Partition, (short)ErrorCodes.RequestTimedOut, -1));
                 }
             }
 
@@ -48,7 +49,7 @@ public sealed class ProduceHandler(ILogManager logManager, ILogger logger) : IRe
         var resp = new ProduceResponse(results);
         WriteResponseFrame(output, header.CorrelationId, resp);
     }
-    
+
     private static ProduceRequest ParseRequest(KafkaBinaryReader reader)
     {
         var requiredAcks = reader.ReadInt16Be();
@@ -103,8 +104,8 @@ public sealed class ProduceHandler(ILogManager logManager, ILogger logger) : IRe
         var frameWriter = new KafkaBinaryWriter(frameStream);
 
         frameWriter.WriteInt32Be(4 + bodyBytes.Length); // length = corrId + body
-        frameWriter.WriteInt32Be(correlationId);        // header: correlationId
-        frameWriter.WriteBytes(bodyBytes);              // body
+        frameWriter.WriteInt32Be(correlationId); // header: correlationId
+        frameWriter.WriteBytes(bodyBytes); // body
 
         var frameBytes = frameStream.ToArray();
         output.Write(frameBytes, 0, frameBytes.Length);

@@ -8,6 +8,7 @@ namespace KafkaBroker.Handlers;
 public class TopicMetadataHandler(ILogger logger, ITopicMetadataManager topicMetadataManager) : IRequestHandler
 {
     private readonly ILogger _logger = logger.ForContext<TopicMetadataHandler>();
+
     public void Handle(RequestHeader header, KafkaBinaryReader reader, Stream output)
     {
         try
@@ -37,18 +38,19 @@ public class TopicMetadataHandler(ILogger logger, ITopicMetadataManager topicMet
             {
                 var empty = new TopicMetadataResponse(
                     Brokers: new List<TopicMetadataResponse.Broker>(0),
-                    Topics:  new List<TopicMetadataResponse.TopicMetadata>(0)
+                    Topics: new List<TopicMetadataResponse.TopicMetadata>(0)
                 );
                 WriteMetadataResponseFrame(output, header.CorrelationId, empty);
             }
             catch (Exception writeEx)
             {
-                _logger.Error(writeEx, "Failed to write fallback Metadata response. CorrelationId={CorrelationId}", header.CorrelationId);
+                _logger.Error(writeEx, "Failed to write fallback Metadata response. CorrelationId={CorrelationId}",
+                    header.CorrelationId);
                 throw;
             }
         }
     }
-    
+
     private static TopicMetadataRequest ParseTopicMetadataRequest(KafkaBinaryReader reader)
     {
         var topicCount = reader.ReadInt32Be();
@@ -59,7 +61,7 @@ public class TopicMetadataHandler(ILogger logger, ITopicMetadataManager topicMet
 
         return new TopicMetadataRequest(topics);
     }
-    
+
     private static void WriteMetadataResponseFrame(Stream output, int correlationId, TopicMetadataResponse response)
     {
         // Body serialize: [Broker][TopicMetadata]

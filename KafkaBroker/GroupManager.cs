@@ -14,8 +14,13 @@ public interface IGroupManager
     /// Supports only ProtocolType="consumer" and ProtocolName="range".
     /// </summary>
     JoinGroupResponse JoinGroup(JoinGroupRequest req);
-}
 
+    /// <summary>
+    /// Remove a member from a group. If the leaving member is the leader,
+    /// elect a new leader if any member remains; bump generation accordingly.
+    /// </summary>
+    LeaveGroupResponse LeaveGroup(LeaveGroupRequest req);
+}
 
 public sealed class GroupManager(int nodeId, string host, int port) : IGroupManager
 {
@@ -25,11 +30,14 @@ public sealed class GroupManager(int nodeId, string host, int port) : IGroupMana
         public string? ProtocolType;
         public string? ChosenProtocol;
         public string? LeaderId;
-        public readonly Dictionary<string, byte[]> Members = new(); // memberId -> last provided metadata (of chosen protocol)
+
+        public readonly Dictionary<string, byte[]>
+            Members = new(); // memberId -> last provided metadata (of chosen protocol)
     }
 
     private readonly Dictionary<string, GroupState> _groups = new(StringComparer.Ordinal);
     private readonly Lock _lock = new();
+
     public GroupCoordinatorResponse FindCoordinator(string groupId)
     {
         return new GroupCoordinatorResponse(
@@ -108,10 +116,52 @@ public sealed class GroupManager(int nodeId, string host, int port) : IGroupMana
                 MemberId: memberId,
                 Members: members
             );
-
         }
     }
 
+    public LeaveGroupResponse LeaveGroup(LeaveGroupRequest req)
+    {
+        // Validate tối thiểu
+        if (string.IsNullOrEmpty(req.GroupId))
+            return new LeaveGroupResponse((short)KafkaErrorCode.InvalidGroupId);
+        if (string.IsNullOrEmpty(req.MemberId))
+            return new LeaveGroupResponse((short)KafkaErrorCode.UnknownMemberId);
+
+        lock (_lock)
+        {
+            if (!_groups.TryGetValue(req.GroupId, out var state))
+            {
+                // Không có group hoặc đã bị dọn
+                return new LeaveGroupResponse((short)KafkaErrorCode.UnknownMemberId);
+            }
+
+            if (!state.Members.Remove(req.MemberId))
+            {
+                // Member không tồn tại trong group
+                return new LeaveGroupResponse((short)KafkaErrorCode.UnknownMemberId);
+            }
+
+            // Nếu member rời đi là leader -> bầu leader mới nếu còn người
+            if (string.Equals(state.LeaderId, req.MemberId, StringComparison.Ordinal))
+            {
+                state.LeaderId = state.Members.Count > 0
+                    ? state.Members.Keys.First() // policy đơn giản: lấy member đầu tiên
+                    : null;
+            }
+
+            // Nếu không còn ai -> xoá group
+            if (state.Members.Count == 0)
+            {
+                _groups.Remove(req.GroupId);
+                // Có thể bump generation lần cuối hoặc không, tuỳ policy; ở đây không cần
+                return new LeaveGroupResponse((short)KafkaErrorCode.NoError);
+            }
+
+            // Còn thành viên → bump generation để follower biết cần sync lại
+            state.GenerationId++;
+            return new LeaveGroupResponse((short)KafkaErrorCode.NoError);
+        }
+    }
 
     private static JoinGroupResponse BuildErrorResponse(string memberId, KafkaErrorCode code)
         => new(

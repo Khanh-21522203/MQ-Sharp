@@ -3,7 +3,8 @@ using KafkaBroker.LogStorage.Interface;
 namespace KafkaBroker.LogStorage;
 
 // Ghi cả 2 nơi (primary là nguồn chân lý), secondary best-effort
-public sealed class MirroredPartitionLog(IPartitionLog primary, IPartitionLog secondary) : IPartitionLog, IOffsetIntrospect
+public sealed class MirroredPartitionLog(IPartitionLog primary, IPartitionLog secondary)
+    : IPartitionLog, IOffsetIntrospect
 {
     public TopicPartitionKey Key => primary.Key;
 
@@ -28,7 +29,8 @@ public sealed class MirroredPartitionLog(IPartitionLog primary, IPartitionLog se
     }
 
     public long GetEarliestOffset() => (primary as IOffsetIntrospect)?.GetEarliestOffset() ?? 0;
-    public long GetLatestOffset()   => (primary as IOffsetIntrospect)?.GetLatestOffset()   ?? 0;
+    public long GetLatestOffset() => (primary as IOffsetIntrospect)?.GetLatestOffset() ?? 0;
+
     public long FindOffsetByTimestamp(long timestampMs)
     {
         var oi = primary as IOffsetIntrospect
