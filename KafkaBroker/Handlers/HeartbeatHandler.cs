@@ -5,7 +5,7 @@ using Serilog;
 
 namespace KafkaBroker.Handlers;
 
-sealed class HeartbeatHandler(ILogger logger) : IRequestHandler
+public sealed class HeartbeatHandler(ILogger logger) : IRequestHandler
 {
     private readonly ILogger _logger = logger.ForContext<HeartbeatHandler>();
 

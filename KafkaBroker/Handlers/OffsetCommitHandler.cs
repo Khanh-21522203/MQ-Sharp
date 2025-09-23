@@ -1,52 +1,85 @@
+using KafkaBroker.Requests;
+using KafkaBroker.Responses;
+using Serilog;
+
 namespace KafkaBroker.Handlers;
 
-sealed class OffsetCommitHandler : IRequestHandler
+public sealed class OffsetCommitHandler(ILogger logger, IOffsetStore offsetStore) : IRequestHandler
 {
-    private readonly GroupCoordinator _coord;
+    private readonly ILogger _logger = logger.ForContext<OffsetCommitHandler>();
 
-    public OffsetCommitHandler(GroupCoordinator coord)
+    public void Handle(RequestHeader header, KafkaBinaryReader reader, Stream output)
     {
-        _coord = coord;
-    }
-
-    public void Handle(RequestHeader hdr, KafkaBinaryReader r, Stream output)
-    {
-        string groupId = r.ReadKafkaString();
-        int generationId = r.ReadInt32Be(); // có thể bỏ qua
-        string memberId = r.ReadKafkaString(); // có thể bỏ qua
-        int topicCount = r.ReadInt32Be();
-
-        var commits = new List<(string, int, long)>();
-        for (int i = 0; i < topicCount; i++)
+        try
         {
-            string topic = r.ReadKafkaString();
-            int partCount = r.ReadInt32Be();
+            var req = ParseOffsetCommitRequest(reader);
+            var resp = offsetStore.Commit(req);
+            WriteOffsetCommitResponseFrame(output, header.CorrelationId, resp);
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex, "OffsetCommit failed: corrId={CorrelationId}", header.CorrelationId);
+            var fail = new OffsetCommitResponse([]);
+            WriteOffsetCommitResponseFrame(output, header.CorrelationId, fail);
+            throw;
+        }
+    }
+    
+    private static OffsetCommitRequest ParseOffsetCommitRequest(KafkaBinaryReader reader)
+    {
+        var consumerGroupId = reader.ReadKafkaString();
+        var topicCount = reader.ReadInt32Be();
+        var topics = new List<OffsetCommitRequest.TopicData>(topicCount);
+
+        for (int t = 0; t < topicCount; t++)
+        {
+            var topicName = reader.ReadKafkaString();
+            var partCount = reader.ReadInt32Be();
+            var partitions = new List<OffsetCommitRequest.PartitionData>(partCount);
+
             for (int p = 0; p < partCount; p++)
             {
-                int partition = r.ReadInt32Be();
-                long offset = r.ReadInt64Be();
-                // v0 có thể có timestamp & metadata; giản lược bỏ qua
-                commits.Add((topic, partition, offset));
+                var partition = reader.ReadInt32Be();
+                var offset = reader.ReadInt64Be();
+                var metadata = reader.ReadKafkaString();
+
+                partitions.Add(new OffsetCommitRequest.PartitionData(partition, offset, metadata));
+            }
+
+            topics.Add(new OffsetCommitRequest.TopicData(topicName, partitions));
+        }
+
+        return new OffsetCommitRequest(consumerGroupId, topics);
+    }
+
+    private static void WriteOffsetCommitResponseFrame(Stream output, int correlationId, OffsetCommitResponse response)
+    {
+        using var bodyStream = new MemoryStream();
+        var w = new KafkaBinaryWriter(bodyStream);
+
+        w.WriteInt32Be(response.Topics.Count);
+        foreach (var topic in response.Topics)
+        {
+            w.WriteKafkaString(topic.TopicName);
+            w.WriteInt32Be(topic.Partitions.Count);
+
+            foreach (var part in topic.Partitions)
+            {
+                w.WriteInt32Be(part.Partition);
+                w.WriteInt16Be(part.ErrorCode);
             }
         }
 
-        _coord.CommitOffsets(groupId, commits.Select(c => (c.Item1, c.Item2, c.Item3)));
+        var body = bodyStream.ToArray();
 
-        // Response: [Topic [Partition ErrorCode]]
-        ResponseWriter.WriteResponse(output, hdr.CorrelationId, w =>
-        {
-            var byTopic = commits.GroupBy(c => c.Item1);
-            w.WriteInt32BE(byTopic.Count());
-            foreach (var g in byTopic)
-            {
-                w.WriteKafkaString(g.Key);
-                w.WriteInt32BE(g.Count());
-                foreach (var c in g)
-                {
-                    w.WriteInt32BE(c.Item2);
-                    w.WriteInt16BE(ErrorCodes.None);
-                }
-            }
-        });
+        using var frameStream = new MemoryStream(capacity: 4 + 4 + body.Length);
+        var fw = new KafkaBinaryWriter(frameStream);
+        fw.WriteInt32Be(4 + body.Length);
+        fw.WriteInt32Be(correlationId);
+        fw.WriteBytes(body);
+
+        var frame = frameStream.ToArray();
+        output.Write(frame, 0, frame.Length);
     }
+
 }

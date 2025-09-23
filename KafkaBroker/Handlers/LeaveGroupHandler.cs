@@ -5,7 +5,7 @@ using Serilog;
 
 namespace KafkaBroker.Handlers;
 
-sealed class LeaveGroupHandler(ILogger logger, IGroupManager groupManager) : IRequestHandler
+public sealed class LeaveGroupHandler(ILogger logger, IGroupManager groupManager) : IRequestHandler
 {
     private readonly ILogger _logger = logger.ForContext<LeaveGroupHandler>();
 

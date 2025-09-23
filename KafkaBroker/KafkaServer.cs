@@ -19,7 +19,8 @@ public class KafkaServer
         ILogger logger,
         ILogManager logManager,
         ITopicMetadataManager topicMetadataManager,
-        IGroupManager groupManager)
+        IGroupManager groupManager,
+        IOffsetStore offsetStore)
     {
         _logger = logger;
         _listener = new TcpListener(endpoint);
@@ -38,7 +39,7 @@ public class KafkaServer
             [(short)ApiKeys.LeaveGroup] = new LeaveGroupHandler(logger, groupManager),
             [(short)ApiKeys.SyncGroup] = new SyncGroupHandler(broker, logger),
 
-            [(short)ApiKeys.OffsetCommit] = new OffsetCommitHandler(broker, logger),
+            [(short)ApiKeys.OffsetCommit] = new OffsetCommitHandler(logger, offsetStore),
             [(short)ApiKeys.OffsetFetch] = new OffsetFetchHandler(broker, logger)
         };
 

@@ -1,55 +1,94 @@
+using KafkaBroker.Requests;
+using KafkaBroker.Responses;
+using Serilog;
+
 namespace KafkaBroker.Handlers;
 
-sealed class OffsetFetchHandler : IRequestHandler
+sealed class OffsetFetchHandler(ILogger logger, IOffsetStore offsetStore): IRequestHandler
 {
-    private readonly GroupCoordinator _coord;
+    private readonly ILogger _logger = logger.ForContext<OffsetFetchHandler>();
 
-    public OffsetFetchHandler(GroupCoordinator coord)
+    public void Handle(RequestHeader header, KafkaBinaryReader reader, Stream output)
     {
-        _coord = coord;
+        try
+        {
+            var req = ParseOffsetFetchRequest(reader);
+
+            _logger.Debug(
+                "OffsetFetch: corrId={CorrelationId}, group={Group}, topics={TopicCount}",
+                header.CorrelationId, req.ConsumerGroup, req.Topics.Count
+            );
+
+            var resp = offsetStore.Fetch(req);
+
+            WriteOffsetFetchResponseFrame(output, header.CorrelationId, resp);
+
+            _logger.Debug(
+                "OffsetFetch DONE: corrId={CorrelationId}, topics={TopicCount}",
+                header.CorrelationId, resp.Topics.Count
+            );
+        }
+        catch (Exception ex)
+        {
+            _logger.Error(ex, "OffsetFetch failed: corrId={CorrelationId}", header.CorrelationId);
+
+            var fail = new OffsetFetchResponse([]);
+            WriteOffsetFetchResponseFrame(output, header.CorrelationId, fail);
+            throw;
+        }
+    }
+    
+    private static OffsetFetchRequest ParseOffsetFetchRequest(KafkaBinaryReader reader)
+    {
+        var groupId = reader.ReadKafkaString();
+        var topicCount = reader.ReadInt32Be();
+
+        var topics = new List<OffsetFetchRequest.TopicData>(topicCount);
+        for (int t = 0; t < topicCount; t++)
+        {
+            var topicName = reader.ReadKafkaString();
+            var partCount = reader.ReadInt32Be();
+            var parts = new List<int>(partCount);
+            for (int i = 0; i < partCount; i++)
+            {
+                parts.Add(reader.ReadInt32Be());
+            }
+            topics.Add(new OffsetFetchRequest.TopicData(topicName, parts));
+        }
+
+        return new OffsetFetchRequest(groupId, topics);
     }
 
-    public void Handle(RequestHeader hdr, KafkaBinaryReader r, Stream output)
+    private static void WriteOffsetFetchResponseFrame(Stream output, int correlationId, OffsetFetchResponse response)
     {
-        string groupId = r.ReadKafkaString();
-        int topicCount = r.ReadInt32Be();
+        using var bodyStream = new MemoryStream();
+        var w = new KafkaBinaryWriter(bodyStream);
 
-        var tps = new List<(string topic, int partition)>();
-        var topicIndex = new List<(string topic, int count)>();
-
-        for (int i = 0; i < topicCount; i++)
+        w.WriteInt32Be(response.Topics.Count);
+        foreach (var topic in response.Topics)
         {
-            string topic = r.ReadKafkaString();
-            int pcount = r.ReadInt32Be();
-            topicIndex.Add((topic, pcount));
-            for (int p = 0; p < pcount; p++)
+            w.WriteKafkaString(topic.TopicName);
+            w.WriteInt32Be(topic.Partitions.Count);
+
+            foreach (var p in topic.Partitions)
             {
-                int partition = r.ReadInt32Be();
-                tps.Add((topic, partition));
+                w.WriteInt32Be(p.Partition);
+                w.WriteInt64Be(p.Offset);
+                w.WriteKafkaString(p.Metadata);
+                w.WriteInt16Be(p.ErrorCode);
             }
         }
 
-        var offs = _coord.FetchOffsets(groupId, tps);
+        var body = bodyStream.ToArray();
 
-        // Response v0-ish: [Topic [Partition Offset Metadata ErrorCode]]
-        ResponseWriter.WriteResponse(output, hdr.CorrelationId, w =>
-        {
-            int idx = 0;
-            w.WriteInt32BE(topicIndex.Count);
-            foreach (var (topic, pcount) in topicIndex)
-            {
-                w.WriteKafkaString(topic);
-                w.WriteInt32BE(pcount);
-                for (int p = 0; p < pcount; p++, idx++)
-                {
-                    var tp = tps[idx];
-                    w.WriteInt32BE(tp.partition);
-                    long off = offs.TryGetValue(tp, out var o) ? o : -1;
-                    w.WriteInt64BE(off);
-                    w.WriteKafkaString(""); // metadata string (optional)
-                    w.WriteInt16BE(ErrorCodes.None);
-                }
-            }
-        });
+        using var frameStream = new MemoryStream(capacity: 4 + 4 + body.Length);
+        var fw = new KafkaBinaryWriter(frameStream);
+        fw.WriteInt32Be(4 + body.Length);
+        fw.WriteInt32Be(correlationId);
+        fw.WriteBytes(body);
+
+        var frame = frameStream.ToArray();
+        output.Write(frame, 0, frame.Length);
     }
+
 }
